@@ -6,3 +6,4 @@ log/
 *.DS_Store
 .vscode/
 .env
+src/rviz_attitude_plugin/

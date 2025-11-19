@@ -25,12 +25,41 @@ uint8_t buf[512];
 // Timing variables
 unsigned long lastHeartbeat = 0;
 unsigned long lastAttitude = 0;
+unsigned long pauseStartTime = 0;
 const unsigned long HEARTBEAT_INTERVAL = 1000;  // 1 Hz (1000ms)
-const unsigned long ATTITUDE_INTERVAL = 1000;   // 1 Hz (1000ms)
+const unsigned long ATTITUDE_INTERVAL = 250;    // 4 Hz 
+
+// Pause durations (in milliseconds)
+const unsigned long PAUSE_ROLL_TO_PITCH = 2500;   // 0.5s
+const unsigned long PAUSE_PITCH_TO_YAW = 2500;    // 0.5s
+const unsigned long PAUSE_YAW_TO_ROLL = 3500;    // 1s
+
+// State machine
+enum DemoState {
+  STATE_ROLL_UP,
+  STATE_ROLL_DOWN,
+  STATE_PAUSE_ROLL_PITCH,
+  STATE_PITCH_UP,
+  STATE_PITCH_DOWN,
+  STATE_PAUSE_PITCH_YAW,
+  STATE_YAW_UP,
+  STATE_YAW_DOWN,
+  STATE_PAUSE_YAW_ROLL
+};
+
+DemoState currentState = STATE_ROLL_UP;
 
 // Pitch simulation
 float currentPitch = 0.0;  // In radians
-int pitchDegrees = 0;      // In degrees (0-10)
+float pitchDegrees = 0;      // In degrees (0-10)
+
+// Roll simulation
+float currentRoll = 0.0;  // In radians
+float rollDegrees = 0;      // In degrees (0-10)
+
+// Yaw simulation
+float currentYaw = 0.0;  // In radians
+float yawDegrees = 0;      // In degrees (0-10)
 
 // MAVLink sequence number
 uint8_t mavlink_seq = 0;
@@ -135,7 +164,7 @@ void sendAttitude() {
   
   // roll (float, radians)
   float roll = 0.0f;
-  memcpy(&packet[idx], &roll, 4);
+  memcpy(&packet[idx], &currentRoll, 4);
   idx += 4;
   
   // pitch (float, radians)
@@ -144,7 +173,7 @@ void sendAttitude() {
   
   // yaw (float, radians)
   float yaw = 0.0f;
-  memcpy(&packet[idx], &yaw, 4);
+  memcpy(&packet[idx], &currentYaw, 4);
   idx += 4;
   
   // rollspeed (float, rad/s)
@@ -185,11 +214,14 @@ void sendAttitude() {
     udp.endPacket();
   }
   
-  Serial.print("Sent ATTITUDE: pitch = ");
-  Serial.print(pitchDegrees);
-  Serial.print(" deg (");
-  Serial.print(currentPitch);
-  Serial.println(" rad)");
+Serial.print("ATTITUDE: roll=");
+Serial.print(rollDegrees);
+Serial.print(" pitch=");
+Serial.print(pitchDegrees);
+Serial.print(" yaw=");
+Serial.print(yawDegrees);
+Serial.print(" state=");
+Serial.println(currentState);
 }
 
 void setup() {
@@ -235,21 +267,94 @@ void loop() {
     lastHeartbeat = currentTime;
   }
   
-  // Send ATTITUDE at 1 Hz and increment pitch
   if (currentTime - lastAttitude >= ATTITUDE_INTERVAL) {
     sendAttitude();
     lastAttitude = currentTime;
-    
-    // Increment pitch (0-10 degrees, then wrap)
-    pitchDegrees++;
-    if (pitchDegrees > 10) {
-      pitchDegrees = 0;
-    }
-    
-    // Convert degrees to radians for MAVLink
-    currentPitch = pitchDegrees * 0.0174533f;  // deg * (PI/180)
   }
+
+  switch (currentState) {
+    case STATE_ROLL_UP:
+      rollDegrees += 0.1;
+      if (rollDegrees >= 15) {
+        currentState = STATE_ROLL_DOWN;
+        Serial.println(">> Roll down");
+      }
+      break;
+      
+    case STATE_ROLL_DOWN:
+      rollDegrees -= 0.1;
+      if (rollDegrees <= 0) {
+        rollDegrees = 0;
+        pauseStartTime = currentTime;
+        currentState = STATE_PAUSE_ROLL_PITCH;
+        Serial.println(">> Pause before Pitch");
+      }
+      break;
+      
+    case STATE_PAUSE_ROLL_PITCH:
+      if (currentTime - pauseStartTime >= PAUSE_ROLL_TO_PITCH) {
+        currentState = STATE_PITCH_UP;
+        Serial.println(">> Pitch up");
+      }
+      break;
+      
+    case STATE_PITCH_UP:
+      pitchDegrees += 0.1;
+      if (pitchDegrees >= 15) {
+        currentState = STATE_PITCH_DOWN;
+        Serial.println(">> Pitch down");
+      }
+      break;
+      
+    case STATE_PITCH_DOWN:
+      pitchDegrees -= 0.1;
+      if (pitchDegrees <= 0) {
+        pitchDegrees = 0;
+        pauseStartTime = currentTime;
+        currentState = STATE_PAUSE_PITCH_YAW;
+        Serial.println(">> Pause before Yaw");
+      }
+      break;
+      
+    case STATE_PAUSE_PITCH_YAW:
+      if (currentTime - pauseStartTime >= PAUSE_PITCH_TO_YAW) {
+        currentState = STATE_YAW_UP;
+        Serial.println(">> Yaw up");
+      }
+      break;
+      
+    case STATE_YAW_UP:
+      yawDegrees += 0.5;
+      if (yawDegrees >= 90) {
+        currentState = STATE_YAW_DOWN;
+        Serial.println(">> Yaw down");
+      }
+      break;
+      
+    case STATE_YAW_DOWN:
+      yawDegrees -= 0.5;
+      if (yawDegrees <= 0) {
+        yawDegrees = 0;
+        pauseStartTime = currentTime;
+        currentState = STATE_PAUSE_YAW_ROLL;
+        Serial.println(">> Pause before next cycle");
+      }
+      break;
+      
+    case STATE_PAUSE_YAW_ROLL:
+      if (currentTime - pauseStartTime >= PAUSE_YAW_TO_ROLL) {
+        currentState = STATE_ROLL_UP;
+        Serial.println(">> Roll up (new cycle)");
+      }
+      break;
+  }
+
+  // Convert to radians
+  currentPitch = pitchDegrees * 0.0174533f;
+  currentRoll = rollDegrees * 0.0174533f;
+  currentYaw = yawDegrees * 0.0174533f;
   
+
   // Listen for incoming UDP packets (ground station commands)
   int packetSize = udp.parsePacket();
   if (packetSize) {

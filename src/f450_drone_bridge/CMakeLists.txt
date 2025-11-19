@@ -60,6 +60,17 @@ ament_target_dependencies(cardinal_markers_node
   visualization_msgs
 )
 
+# roll correction for attitude display plugin bug 
+add_executable(imu_roll_corrector_node
+ src/imu_roll_corrector.cpp
+ )
+
+ ament_target_dependencies(imu_roll_corrector_node
+  rclcpp
+  sensor_msgs
+  tf2)
+
+
 # ============================================
 # Installation
 # ============================================
@@ -69,6 +80,7 @@ install(TARGETS
   path_node
   attitude_to_tf_node
   cardinal_markers_node
+  imu_roll_corrector_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

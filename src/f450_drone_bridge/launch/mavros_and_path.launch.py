@@ -36,7 +36,7 @@ def generate_launch_description():
         name='cardinal_markers',
         parameters=[
             {'frame_id': 'map'},
-            {'distance': 2.0},
+            {'distance': 1.5},
             {'text_scale': 0.2},
             {'text_height': 0.0}
         ]
@@ -54,6 +54,16 @@ def generate_launch_description():
         ]
     )
 
+    # imu node corrector for attitude plugin (C++)
+    imu_roll_corrector = Node(
+        package='f450_drone_bridge',
+        executable='imu_roll_corrector_node',
+        output='screen',
+        name='imu_roll_corrector',
+        parameters=[
+        ]
+    )
+
     return LaunchDescription([
         frame,
         fcu_url, 
@@ -61,5 +71,6 @@ def generate_launch_description():
         mavros,
         cardinal_markers,
         attitude_tf,
+        imu_roll_corrector
         #path_node
     ])
