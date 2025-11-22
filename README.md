@@ -6,13 +6,37 @@
 
 *ESP32 streams MAVLink attitude data via UDP to MAVROS, displayed in RViz2 with HUD and F450 model*
 
+## Prerequisites
+
+- ROS 2 Humble
+- MAVROS package (`apt install ros-humble-mavros-*`)
+- ESP32 with WiFi capability
+- Wireshark (optional, for packet inspection)
+
 ## Overview
 
 Hardware-in-the-loop bench test for validating MAVLink → ROS 2 communication pipeline before any real flight. An ESP32-WROOM emulates MAVLink attitude data and streams it over UDP to MAVROS, which converts NED → ENU frames and publishes standard ROS 2 topics for visualization in RViz2.
 
 **Pipeline:** ESP32 (MAVLink) → UDP → MAVROS (ROS 2) → /mavros/imu/data → RViz2 (HUD + F450 model)
 
-This approach validates communication, message rates, reference frames, and visualization with zero propeller spin.
+## Why This Approach
+
+This approach validates communication, message rates, reference frames, and visualization with zero propeller spin. Validating telemetry pipelines in hardware-in-the-loop configuration reduces risk and accelerates development.
+
+## Technologies Demonstrated
+
+- **ROS 2** (Humble) - launch files, custom nodes, topic remapping
+- **MAVLink protocol** - attitude message generation and parsing
+- **MAVROS** - NED ↔ ENU frame transformations
+- **ESP32** - UDP networking, embedded systems integration
+- **URDF/xacro** - robot description and visualization
+- **RViz2** - custom plugins, 3D visualization
+
+## Technical Challenges
+
+- **Frame convention validation**: Verified NED→ENU conversion with systematic roll/pitch/yaw testing
+- **QoS profile matching**: Ensured MAVROS topics compatible with custom ROS2 nodes
+- **Real-time visualization**: Integrated third-party RViz plugin with custom telemetry pipeline
 
 ## Workspace Structure
 
@@ -51,6 +75,9 @@ sudo wireshark -i wlp3s0 -k -f "udp port 14550"
 - **Consistent orientation** — pitch, roll, and yaw appear exactly as expected in the ENU frame
 - **Clear visualization** — attitude plugin provides an intuitive view of the drone's state
 
-## Repository
 
-Code & configuration: https://github.com/alain-31/f450_drone_demo
+## Contact
+
+LinkedIn: https://www.linkedin.com/in/alain-meil-50b9525
+
+*Currently seeking robotics engineering opportunities in autonomous navigation, UAV systems, or sensor integration.*
