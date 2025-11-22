@@ -1,4 +1,4 @@
-# f450_drone_ws
+# f450_drone_demo
 
 ## Demo
 
@@ -8,7 +8,7 @@
 
 ## Overview
 
-Hardware-in-the-loop bench test for validating MAVLink → ROS 2 communication pipeline before any real flight. An ESP32 WROOM emulates MAVLink attitude data and streams it over UDP to MAVROS, which converts NED → ENU frames and publishes standard ROS 2 topics for visualization in RViz2.
+Hardware-in-the-loop bench test for validating MAVLink → ROS 2 communication pipeline before any real flight. An ESP32-WROOM emulates MAVLink attitude data and streams it over UDP to MAVROS, which converts NED → ENU frames and publishes standard ROS 2 topics for visualization in RViz2.
 
 **Pipeline:** ESP32 (MAVLink) → UDP → MAVROS (ROS 2) → /mavros/imu/data → RViz2 (HUD + F450 model)
 
