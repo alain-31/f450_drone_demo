@@ -51,7 +51,7 @@ This approach validates communication, message rates, reference frames, and visu
 
 Launches the MAVROS bridge (UDP port 14550), MarkerArray generation for cardinal points, TF generation for attitude display, and IMU topic roll corrections for the attitude plugin:
 ```bash
-ros2 launch mavros mavros.launch.py fcu_url:=udp://@0.0.0.0:14550?mav10=1
+ros2 launch f450_drone_bridge mavros_and_path.launch.py fcu_url:=udp://@0.0.0.0:14550?mav10=1
 ```
 
 **2. Start robot description + RViz2 visualization:**
