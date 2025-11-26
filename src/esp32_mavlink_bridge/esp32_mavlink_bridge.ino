@@ -1,112 +1,204 @@
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-// ============ CONFIGURATION - EDIT THESE ============
-// Access Point mode - ESP32 creates WiFi hotspot
-const char* ap_ssid = "DRONE_LINK";        // Change to your preferred WiFi name
-const char* ap_password = "12345678";      // Change password (min 8 characters)
+// ============ CONFIGURATION ============
+const char* ap_ssid = "DRONE_LINK";
+const char* ap_password = "12345678";
 
-#define UART_BAUD 57600      // Match APM baud rate (usually 57600 or 115200)
-#define UDP_PORT 14550       // MAVLink ground station port
-#define REMOTE_UDP_PORT 14555 // MAVLink remote port
-
-// ESP32 UART2 pins - Connect through level shifter to APM
-#define RXD2 16  // ESP32 RX ← APM TX (through level shifter)
-#define TXD2 17  // ESP32 TX → APM RX (through level shifter)
-// ====================================================
+#define UDP_PORT 14550
+#define UART_BAUD 57600
+#define RX_PIN 16
+#define TX_PIN 17
+// =======================================
 
 WiFiUDP udp;
 IPAddress remoteIP;
 uint16_t remotePort = 0;
 bool hasRemoteIP = false;
 
-uint8_t buf[512];
+// Packet buffer
+uint8_t packetBuffer[280];
+uint16_t bufferIndex = 0;
+uint16_t expectedPacketLength = 0;
+
+uint8_t udpBuffer[280];
+
+// Statistics
+unsigned long bytesReceived = 0;
+unsigned long packetsCompleted = 0;
+unsigned long packetsSent = 0;
+unsigned long bytesFromGCS = 0;
+unsigned long packetsToAPM = 0;
+unsigned long lastStatsTime = 0;
+
+// Debug
+unsigned long invalidStarts = 0;
+unsigned long lastDebugTime = 0;
+
+void sendPacket() {
+  if (bufferIndex == 0) return;
+  
+  // Debug first few packets
+  if (packetsSent < 5) {
+    Serial.printf("Sending packet #%lu: length=%d, expected=%d\n", 
+                  packetsSent + 1, bufferIndex, expectedPacketLength);
+    Serial.print("  First bytes: ");
+    for (int i = 0; i < min(10, (int)bufferIndex); i++) {
+      Serial.printf("%02X ", packetBuffer[i]);
+    }
+    Serial.println();
+  }
+  
+  if (hasRemoteIP) {
+    udp.beginPacket(remoteIP, remotePort);
+    udp.write(packetBuffer, bufferIndex);
+    udp.endPacket();
+  } else {
+    IPAddress broadcastIP(192, 168, 4, 255);
+    udp.beginPacket(broadcastIP, UDP_PORT);
+    udp.write(packetBuffer, bufferIndex);
+    udp.endPacket();
+  }
+  
+  packetsSent++;
+  bufferIndex = 0;
+  expectedPacketLength = 0;
+}
 
 void setup() {
-  // Debug serial (USB)
   Serial.begin(115200);
   delay(1000);
-  Serial.println("\n\n=================================");
-  Serial.println("ESP32 MAVLink WiFi Bridge - AP Mode");
+  Serial.println("\n=================================");
+  Serial.println("ESP32 MAVLink Bridge - DEBUG");
   Serial.println("=================================");
   
-  // Initialize UART2 for APM communication
-  Serial2.begin(UART_BAUD, SERIAL_8N1, RXD2, TXD2);
-  Serial.println("✓ UART2 initialized");
-  Serial.printf("  Baud rate: %d\n", UART_BAUD);
-  Serial.printf("  RX pin: GPIO%d\n", RXD2);
-  Serial.printf("  TX pin: GPIO%d\n", TXD2);
+  Serial2.begin(UART_BAUD, SERIAL_8N1, RX_PIN, TX_PIN);
+  Serial.printf("✓ UART: %d baud\n", UART_BAUD);
   
-  // Create WiFi Access Point
-  Serial.println("\nStarting Access Point...");
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ap_ssid, ap_password);
+  Serial.printf("✓ WiFi: %s\n", WiFi.softAPIP().toString().c_str());
   
-  IPAddress apIP = WiFi.softAPIP();
-  Serial.println("✓ Access Point started");
-  Serial.printf("  SSID: %s\n", ap_ssid);
-  Serial.printf("  Password: %s\n", ap_password);
-  Serial.printf("  IP address: %s\n", apIP.toString().c_str());
-  
-  // Start UDP
   udp.begin(UDP_PORT);
-  Serial.printf("✓ UDP listening on port %d\n", UDP_PORT);
+  Serial.printf("✓ UDP: port %d\n\n", UDP_PORT);
+  Serial.println("Waiting for MAVLink packets...\n");
   
-  Serial.println("\n=================================");
-  Serial.println("Ready for MAVLink traffic!");
-  Serial.println("Connect your laptop to WiFi:");
-  Serial.printf("  Network: %s\n", ap_ssid);
-  Serial.println("=================================\n");
+  lastStatsTime = millis();
+  lastDebugTime = millis();
 }
 
 void loop() {
-  // ===== APM → UART → ESP32 =====
-  if (Serial2.available()) {
-    int len = Serial2.available();
-    if (len > sizeof(buf)) len = sizeof(buf);
+  unsigned long currentTime = millis();
+  
+  // ======== UART → UDP ========
+  while (Serial2.available()) {
+    uint8_t byte = Serial2.read();
+    bytesReceived++;
     
-    int bytesRead = Serial2.readBytes(buf, len);
+    // Looking for packet start
+    if (bufferIndex == 0) {
+      if (byte == 0xFE) {  // MAVLink v1 magic byte
+        packetBuffer[bufferIndex++] = byte;
+        expectedPacketLength = 0;
+        
+        // Debug first packet start
+        if (packetsCompleted == 0) {
+          Serial.println("First 0xFE detected!");
+        }
+      } else {
+        invalidStarts++;
+        // Show first few invalid bytes
+        if (invalidStarts <= 10) {
+          Serial.printf("Ignoring non-MAVLink byte: 0x%02X\n", byte);
+        }
+      }
+      continue;
+    }
     
-    // ===== ESP32 → UDP → Ground Station =====
-    if (hasRemoteIP) {
-      // Send to known ground station (unicast)
-      udp.beginPacket(remoteIP, remotePort);
-      udp.write(buf, bytesRead);
-      udp.endPacket();
-    } else {
-      // Broadcast discovery - send to subnet broadcast
-      IPAddress broadcastIP(192, 168, 4, 255);
-      udp.beginPacket(broadcastIP, UDP_PORT);
-      udp.write(buf, bytesRead);
-      udp.endPacket();
+    // Add byte to buffer
+    packetBuffer[bufferIndex++] = byte;
+    
+    // After magic (0) and length (1), calculate expected length
+    if (bufferIndex == 2) {
+      uint8_t payloadLength = packetBuffer[1];
+      expectedPacketLength = 6 + payloadLength + 2;
+      
+      // Debug first few packets
+      if (packetsCompleted < 5) {
+        Serial.printf("Packet detected: payload_len=%d, total_len=%d\n", 
+                      payloadLength, expectedPacketLength);
+      }
+      
+      // Sanity check
+      if (expectedPacketLength > sizeof(packetBuffer) || expectedPacketLength < 8) {
+        Serial.printf("ERROR: Invalid length %d (payload=%d), resetting\n", 
+                      expectedPacketLength, payloadLength);
+        bufferIndex = 0;
+        expectedPacketLength = 0;
+        continue;
+      }
+    }
+    
+    // Check if packet is complete
+    if (expectedPacketLength > 0 && bufferIndex >= expectedPacketLength) {
+      packetsCompleted++;
+      sendPacket();
+    }
+    
+    // Safety
+    if (bufferIndex >= sizeof(packetBuffer)) {
+      Serial.println("ERROR: Buffer overflow!");
+      bufferIndex = 0;
+      expectedPacketLength = 0;
     }
   }
   
-  // ===== ESP32 <- UDP <- Ground Station =====
+  // ======== UDP → UART ========
   int packetSize = udp.parsePacket();
   if (packetSize) {
-    // Learn remote IP from first packet (discovery)
     if (!hasRemoteIP) {
       remoteIP = udp.remoteIP();
       remotePort = udp.remotePort();
       hasRemoteIP = true;
-      
-      Serial.println("\n>>> Ground Station Connected <<<");
-      Serial.print("  IP: ");
-      Serial.print(remoteIP);
-      Serial.print(":");
-      Serial.println(remotePort);
-      Serial.println();
+      Serial.println("\n>>> GCS Connected <<<");
+      Serial.printf("  %s:%d\n\n", remoteIP.toString().c_str(), remotePort);
     }
     
-    // ===== APM <- UART <- ESP32 =====
-    // Read packet and forward to APM via UART
-    int len = udp.read(buf, sizeof(buf));
+    int len = udp.read(udpBuffer, sizeof(udpBuffer));
     if (len > 0) {
-      Serial2.write(buf, len);
+      Serial2.write(udpBuffer, len);
+      bytesFromGCS += len;
+      packetsToAPM++;
     }
   }
   
-  // Small delay to prevent watchdog timer issues
+  // ======== Debug output every 2s ========
+  if (currentTime - lastDebugTime >= 2000) {
+    Serial.printf("[%lu] Bytes: %lu, Complete pkts: %lu, Sent: %lu, Buffer: %d/%d\n",
+                  currentTime/1000, bytesReceived, packetsCompleted, packetsSent,
+                  bufferIndex, expectedPacketLength);
+    lastDebugTime = currentTime;
+  }
+  
+  // ======== Statistics every 5s ========
+  if (currentTime - lastStatsTime >= 5000) {
+    Serial.println("\n--- Stats (5s) ---");
+    Serial.printf("Bytes received: %lu\n", bytesReceived);
+    Serial.printf("Packets completed: %lu\n", packetsCompleted);
+    Serial.printf("UDP packets sent: %lu\n", packetsSent);
+    Serial.printf("Invalid starts: %lu\n", invalidStarts);
+    Serial.printf("GCS→APM: %lu bytes, %lu pkts\n", bytesFromGCS, packetsToAPM);
+    Serial.printf("Status: %s\n", hasRemoteIP ? remoteIP.toString().c_str() : "Broadcasting");
+    Serial.println("------------------\n");
+    
+    bytesReceived = 0;
+    packetsCompleted = 0;
+    packetsSent = 0;
+    invalidStarts = 0;
+    bytesFromGCS = 0;
+    packetsToAPM = 0;
+    lastStatsTime = currentTime;
+  }
+  
   delay(1);
 }
